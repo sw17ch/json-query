@@ -1,16 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Text.JSONQ (
-    JSONV,  -- | A JSON value
-    JSONQ,  -- | A query
-    JSONS,  -- | A selector
-    jsonv,  -- | Parse a string to a JSON value
-    jsonv_, -- | Parse a string a JSON value, errors go to IO
-
-    showJSON, -- From Text.JSON.AttoJSON
-    check,
-
-    q,
-    q_,
+    JSONV, JSONQ, JSONS,
+    jsonv, jsonv_,
+    parseQ, parseQ_, check,
+    showJSON, showQuery,
+    query, query_,
 ) where
 
 import Data.Maybe
@@ -22,8 +16,16 @@ import Text.JSON.AttoJSON
 import Text.Parsec
 import Text.Parsec.ByteString
 
--- | JSON value wrapper. Wrapper for JSValue from Text.JSON.
+-- | A JSONV (value) is a synonym for Text.JSON.AttoJSON.JSValue
 type JSONV = JSValue
+
+-- | A JSONQ (query) is just a list of selectors.
+type JSONQ = [JSONS]
+
+-- | A JSONS (selector)
+data JSONS = Key B.ByteString
+           | Idx Int
+    deriving (Show)
 
 -- | Convert a string to either a JSONS or a parse error.
 jsonv :: B.ByteString -> Either String JSONV
@@ -36,33 +38,67 @@ jsonv_ s = case jsonv s of
                 Right j -> j
                 Left e -> error e
 
-type JSONQ = [JSONS]
+showQuery :: JSONQ -> String
+showQuery [] = ""
+showQuery (q:rest) = 
+    let c = one q
+        r = map dot rest
+    in c ++ concat r
+    where
+        one q = case q of
+                    (Key k) -> "'" ++ B.unpack k ++ "'"
+                    (Idx i) -> "[" ++ show i ++ "]"
+        dot q = case q of
+                    (Key _) -> "." ++ one q
+                    (Idx _) -> one q
 
-data JSONS = Key B.ByteString
-           | Idx Int
-    deriving (Show)
+-- | Tries to parse a query. True if valid, False if broken.
+check :: B.ByteString -> Bool
+check s = case parseQ s of
+            Left _ -> False
+            Right _ -> True
 
+-- | Run a raw query string against a JSONV.
+query :: JSONV -> B.ByteString -> Either String JSONV
+query v l' = runQuery v l
+    where Right l = parseQ l'
+
+-- | Run a raw query string against a JSONV. Errors
+-- are raised in IO.
+query_ :: JSONV -> B.ByteString -> JSONV
+query_ val l = case query val l of
+                    Left e -> error e
+                    Right v -> v
+
+
+{- Non-exported functions. -}
+
+-- | Parse a JSONQ from an input string.
 parseJSONQ :: Parser JSONQ
 parseJSONQ = do
-    qry <- parseSet `sepBy1` (char '.')
+    qry <- parseGroup `sepBy1` (char '.')
     eof
     
     return $ concat qry
 
-parseSet :: Parser [JSONS]
-parseSet = do
+-- | Parse a key and 0 to many indicies.
+parseGroup :: Parser [JSONS]
+parseGroup = do
     k <- parseKey
     i <- many $ parseIdx
 
     return (k : i)
 
+-- | Parse a key
 parseKey :: Parser JSONS
 parseKey = try parseQuotedKey
        <|> try parseNormKey
 
+-- | Parse an unquoted, alpha-numeric, key
 parseNormKey :: Parser JSONS
 parseNormKey = many1 alphaNum >>= return . Key . B.pack
 
+-- | Parse a quoted string.
 parseQuotedKey :: Parser JSONS
 parseQuotedKey = do
     _ <- char '\''
@@ -70,6 +106,7 @@ parseQuotedKey = do
     _ <- char '\''
     return . Key . B.pack $ k
 
+-- | Parse an index
 parseIdx :: Parser JSONS
 parseIdx = do
     _ <- char '['
@@ -78,23 +115,14 @@ parseIdx = do
 
     return . Idx . read $ d
 
+-- | Shorthand to parse a query
 parseQ :: B.ByteString -> Either ParseError JSONQ
 parseQ = parse parseJSONQ "json-query"
 
--- | Tries to parse a query. True if valid, False if broken.
-check :: B.ByteString -> Bool
-check s = case parseQ s of
-            Left _ -> False
-            Right _ -> True
-
-q :: JSONV -> B.ByteString -> Either String JSONV
-q v l' = run v l
-    where Right l = parseQ l'
-
-q_ :: JSONV -> B.ByteString -> JSONV
-q_ val l = case q val l of
-                Left e -> error e
-                Right v -> v
+parseQ_ :: B.ByteString -> JSONQ
+parseQ_ s = case parseQ s of
+                (Left e) -> error $ show e
+                (Right q) -> q
 
 -- | Takes a value and a query. Applies the first selector
 -- and returns the remaining query and the selected value.
@@ -112,11 +140,12 @@ decompose v (s:ss) = case (s,v) of
                         True -> Just (ss, a !! i)
                         False -> Nothing
 
-run :: JSONV -> JSONQ -> Either String JSONV
-run v qry = case decompose v qry of
-            (Just ([],   v')) -> Right $ v'
-            (Just (rest, v')) -> run v' rest
-            Nothing -> Left $ "Unable to find " ++ (show qry)
+-- | Run a query against a JSONV.
+runQuery :: JSONV -> JSONQ -> Either String JSONV
+runQuery v qry = case decompose v qry of
+                    (Just ([],   v')) -> Right $ v'
+                    (Just (rest, v')) -> runQuery v' rest
+                    Nothing -> Left $ "Unable to find " ++ (show qry)
 
 {- Test data -}
 
