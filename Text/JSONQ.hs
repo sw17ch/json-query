@@ -38,6 +38,8 @@ jsonv_ s = case jsonv s of
                 Right j -> j
                 Left e -> error e
 
+-- | Renders a query back to a string that would
+-- reproduce the query when parsed.
 showQuery :: JSONQ -> String
 showQuery [] = ""
 showQuery (q:rest) = 
@@ -69,7 +71,6 @@ query_ :: JSONV -> B.ByteString -> JSONV
 query_ val l = case query val l of
                     Left e -> error e
                     Right v -> v
-
 
 {- Non-exported functions. -}
 
