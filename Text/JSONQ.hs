@@ -11,8 +11,8 @@ import Data.Maybe
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
 
+-- import Text.Regex.Posix -- To be added
 import Text.JSON.AttoJSON
-
 import Text.Parsec
 import Text.Parsec.ByteString
 
@@ -24,6 +24,7 @@ type JSONQ = [JSONS]
 
 -- | A JSONS (selector)
 data JSONS = Key B.ByteString
+           | Pat B.ByteString
            | Idx Int
     deriving (Show)
 
@@ -47,12 +48,13 @@ showQuery (q:rest) =
         r = map dot rest
     in c ++ concat r
     where
-        one q = case q of
+        one q' = case q' of
                     (Key k) -> "'" ++ B.unpack k ++ "'"
                     (Idx i) -> "[" ++ show i ++ "]"
-        dot q = case q of
-                    (Key _) -> "." ++ one q
-                    (Idx _) -> one q
+                    (Pat p) -> "<" ++ B.unpack p ++ ">"
+        dot q' = case q' of
+                    (Idx _) -> one q'
+                    _       -> "." ++ one q'
 
 -- | Tries to parse a query. True if valid, False if broken.
 check :: B.ByteString -> Bool
@@ -85,10 +87,17 @@ parseJSONQ = do
 -- | Parse a key and 0 to many indicies.
 parseGroup :: Parser [JSONS]
 parseGroup = do
-    k <- parseKey
+    k <- choice [parsePat,parseKey]
     i <- many $ parseIdx
 
     return (k : i)
+
+parsePat :: Parser JSONS
+parsePat = do
+    _ <- char '<'
+    pat <- many1 $ noneOf ">"
+    _ <- char '>'
+    return $ Pat $ B.pack pat
 
 -- | Parse a key
 parseKey :: Parser JSONS
