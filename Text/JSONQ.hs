@@ -16,6 +16,8 @@ import Text.JSON.AttoJSON
 import Text.Parsec
 import Text.Parsec.ByteString
 
+import System.IO.Unsafe
+
 -- | A JSONV (value) is a synonym for Text.JSON.AttoJSON.JSValue
 type JSONV = JSValue
 
@@ -62,6 +64,8 @@ check s = case parseQ s of
             Left _ -> False
             Right _ -> True
 
+{- query and query_ only support exact paths into the tree -}
+
 -- | Run a raw query string against a JSONV.
 query :: JSONV -> B.ByteString -> Either String JSONV
 query v l' = runQuery v l
@@ -73,6 +77,14 @@ query_ :: JSONV -> B.ByteString -> JSONV
 query_ val l = case query val l of
                     Left e -> error e
                     Right v -> v
+
+queryMany :: JSONV -> B.ByteString -> Either String [JSONV]
+queryMany = undefined
+
+queryMany_ :: JSONV -> B.ByteString -> [JSONV]
+queryMany_ val l = case queryMany val l of
+                            Left e -> error e
+                            Right v -> v
 
 {- Non-exported functions. -}
 
@@ -139,9 +151,9 @@ parseQ_ s = case parseQ s of
 decompose :: JSONV -> JSONQ -> Maybe (JSONQ, JSONV)
 decompose v [] = Just ([],v)
 decompose v (s:ss) = case (s,v) of
-                        (Key k, JSObject m) -> g_map k m
-                        (Idx i, JSArray a) -> g_ary i a
-                        _ -> Nothing
+                        (Key k, JSObject m) -> [g_map k m]
+                        (Pat p, JSObject m) -> extractMatch p m
+                        (Idx i, JSArray a)  -> [g_ary i a]
     where
         g_map k m = case M.member k m of
                         True -> Just (ss, fromJust $ M.lookup k m)
@@ -149,6 +161,9 @@ decompose v (s:ss) = case (s,v) of
         g_ary i a = case i < length a of
                         True -> Just (ss, a !! i)
                         False -> Nothing
+
+extractMatch :: B.ByteString -> (M.Map B.ByteString JSValue) -> Maybe (JSONQ, [JSONV])
+extractMatch p m = undefined
 
 -- | Run a query against a JSONV.
 runQuery :: JSONV -> JSONQ -> Either String JSONV
@@ -159,19 +174,11 @@ runQuery v qry = case decompose v qry of
 
 {- Test data -}
 
-{-
 input :: B.ByteString
-input = "{ \"the name\": \"john\", \"age\": 24, \"pets\": [ { \"name\": \"Malcolm\", \"type\": \"cat\" }, { \"name\": \"River\", \"type\": \"cat\" }, { \"name\": \"Coach\", \"type\": \"dog\" } ] } "
-
-input2 = "{\"\": \"blank\"}"
-
-query1, query2 :: B.ByteString
-query1 = "age"
-query2 = "pets[2]"
+input = unsafePerformIO $ B.readFile "sw17ch.comments.json"
 
 {- An example using this data:
  - jsonv_ input `q` "pets[0].name"
  - > Right (JSString {fromJSString = "Malcolm"})
  -}
 
--}
